@@ -1,0 +1,268 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Scan Wajah â†’ Telegram</title>
+<style>
+  :root{
+    --bg:#0f1418;
+    --panel:#161d23;
+    --panel-2:#1c252c;
+    --line:#2a343c;
+    --text:#e8edf0;
+    --muted:#8aa0ac;
+    --ok:#3ddc84;
+    --fail:#ff5f5f;
+    --accent:#2f9e8f;
+    --accent-2:#c8a24d;
+  }
+  *{box-sizing:border-box;}
+  body{
+    margin:0;
+    font-family:'Segoe UI',system-ui,-apple-system,sans-serif;
+    background:var(--bg);
+    color:var(--text);
+    min-height:100vh;
+    display:flex;
+    flex-direction:column;
+    align-items:center;
+    padding:20px 16px 50px;
+  }
+  .wrap{width:100%;max-width:480px;}
+  header{text-align:center;margin-bottom:18px;}
+  header h1{font-size:1.25rem;margin:0 0 4px;}
+  header p{margin:0;color:var(--muted);font-size:.85rem;}
+
+  .card{
+    background:var(--panel);
+    border:1px solid var(--line);
+    border-radius:12px;
+    padding:16px;
+    margin-bottom:16px;
+  }
+
+  .cam-frame{
+    position:relative;
+    width:100%;
+    aspect-ratio:3/4;
+    background:#000;
+    border-radius:12px;
+    overflow:hidden;
+    border:1px solid var(--line);
+  }
+  #video, #captured{
+    width:100%;height:100%;object-fit:cover;display:block;
+  }
+  #captured{display:none;}
+  .face-guide{
+    position:absolute; inset:0;
+    display:flex;align-items:center;justify-content:center;
+    pointer-events:none;
+  }
+  .face-guide svg{width:62%;opacity:.55;}
+
+  .cam-controls{
+    display:flex;gap:10px;margin-top:14px;
+  }
+  button{
+    border:none;border-radius:9px;cursor:pointer;font-weight:700;font-size:.92rem;
+  }
+  .btn-main{
+    flex:1;padding:14px;background:var(--accent);color:#06110f;
+  }
+  .btn-main:disabled{opacity:.5;cursor:not-allowed;}
+  .btn-ghost{
+    padding:14px 16px;background:var(--panel-2);color:var(--muted);border:1px solid var(--line);
+  }
+  .btn-send{
+    width:100%;padding:14px;background:var(--ok);color:#06170e;margin-top:10px;
+  }
+  .btn-send:disabled{opacity:.5;cursor:not-allowed;}
+
+  .settings-toggle{
+    display:flex;justify-content:space-between;align-items:center;cursor:pointer;
+  }
+  .settings-toggle h2{margin:0;font-size:.85rem;color:var(--accent-2);text-transform:uppercase;letter-spacing:.5px;}
+  .settings-body{display:none;margin-top:12px;}
+  .settings-body.open{display:block;}
+  label{display:block;font-size:.8rem;color:var(--muted);margin:10px 0 5px;}
+  label:first-of-type{margin-top:0;}
+  input[type=text], input[type=password]{
+    width:100%;padding:10px 12px;background:var(--panel-2);
+    border:1px solid var(--line);border-radius:8px;color:var(--text);font-size:.9rem;outline:none;
+  }
+  input:focus{border-color:var(--accent);}
+  .hint{font-size:.72rem;color:var(--muted);margin-top:8px;line-height:1.5;}
+  code{background:var(--panel-2);padding:1px 4px;border-radius:4px;}
+
+  .status-line{
+    text-align:center;font-size:.85rem;color:var(--muted);margin-top:10px;min-height:1.2em;
+  }
+  .status-line.ok{color:var(--ok);}
+  .status-line.fail{color:var(--fail);}
+
+  .counter{
+    text-align:center;font-size:.78rem;color:var(--muted);margin-top:6px;
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>ðŸ“· Scan Wajah</h1>
+    <p>Ambil foto lalu kirim langsung ke Telegram, tanpa isi data apapun.</p>
+  </header>
+
+  <div class="card">
+    <div class="cam-frame">
+      <video id="video" autoplay playsinline muted></video>
+      <img id="captured">
+      <div class="face-guide" id="faceGuide">
+        <svg viewBox="0 0 100 130" fill="none" stroke="#ffffff" stroke-width="2">
+          <ellipse cx="50" cy="55" rx="34" ry="45"/>
+          <path d="M20 100 Q50 125 80 100"/>
+        </svg>
+      </div>
+    </div>
+
+    <div class="cam-controls">
+      <button class="btn-main" id="captureBtn" onclick="capture()">ðŸ“¸ Ambil Foto</button>
+      <button class="btn-ghost" id="retakeBtn" onclick="retake()" style="display:none">â†º Ulangi</button>
+    </div>
+
+    <button class="btn-send" id="sendBtn" onclick="sendToTelegram()" style="display:none">Kirim ke Telegram</button>
+
+    <div class="status-line" id="statusLine"></div>
+    <div class="counter" id="counter"></div>
+  </div>
+</div>
+
+<canvas id="canvas" style="display:none"></canvas>
+
+<script>
+// ====== KONFIGURASI BOT TELEGRAM (isi manual di sini) ======
+const BOT_TOKEN = "8833865176:AAEbRb-jD9mO4zxg43txV5ITDtky_p1vq8c";   // contoh: "123456789:ABCDefGhIJKlmNoPQRstuVwXyZ"
+const CHAT_ID   = "5657292910";     // contoh: "-1001234567890" atau "123456789"
+// =============================================================
+
+let stream = null;
+let capturedBlob = null;
+let sentCount = 0;
+
+const video = document.getElementById('video');
+const captured = document.getElementById('captured');
+const canvas = document.getElementById('canvas');
+const faceGuide = document.getElementById('faceGuide');
+const captureBtn = document.getElementById('captureBtn');
+const retakeBtn = document.getElementById('retakeBtn');
+const sendBtn = document.getElementById('sendBtn');
+const statusLine = document.getElementById('statusLine');
+const counter = document.getElementById('counter');
+
+function loadSettings(){
+  sentCount = parseInt(localStorage.getItem('sw_count') || '0', 10);
+  updateCounter();
+  if(!BOT_TOKEN || BOT_TOKEN === "8833865176:AAEbRb-jD9mO4zxg43txV5ITDtky_p1vq8c" || !CHAT_ID || CHAT_ID === "5657292910"){
+    setStatus('âš  Bot Token / Chat ID belum diisi di kode (cari BOT_TOKEN & CHAT_ID di script)', 'fail');
+  }
+}
+function updateCounter(){
+  counter.textContent = sentCount > 0 ? `Total terkirim: ${sentCount}` : '';
+}
+
+async function startCamera(){
+  try{
+    stream = await navigator.mediaDevices.getUserMedia({
+      video: { facingMode: 'user', width:{ideal:720}, height:{ideal:960} },
+      audio:false
+    });
+    video.srcObject = stream;
+  }catch(err){
+    setStatus('Tidak bisa akses kamera: ' + err.message, 'fail');
+  }
+}
+
+function capture(){
+  const w = video.videoWidth, h = video.videoHeight;
+  if(!w || !h){ setStatus('Kamera belum siap, coba lagi', 'fail'); return; }
+  canvas.width = w; canvas.height = h;
+  const ctx = canvas.getContext('2d');
+  ctx.translate(w,0); ctx.scale(-1,1); // mirror agar sesuai preview
+  ctx.drawImage(video, 0, 0, w, h);
+  canvas.toBlob(blob=>{
+    capturedBlob = blob;
+    captured.src = URL.createObjectURL(blob);
+    captured.style.display = 'block';
+    video.style.display = 'none';
+    faceGuide.style.display = 'none';
+    captureBtn.style.display = 'none';
+    retakeBtn.style.display = 'block';
+    sendBtn.style.display = 'block';
+    setStatus('', '');
+  }, 'image/jpeg', 0.92);
+}
+
+function retake(){
+  capturedBlob = null;
+  captured.style.display = 'none';
+  video.style.display = 'block';
+  faceGuide.style.display = 'flex';
+  captureBtn.style.display = 'block';
+  retakeBtn.style.display = 'none';
+  sendBtn.style.display = 'none';
+  setStatus('', '');
+}
+
+function setStatus(msg, type){
+  statusLine.textContent = msg;
+  statusLine.className = 'status-line' + (type ? ' '+type : '');
+}
+
+async function sendToTelegram(){
+  const token = BOT_TOKEN;
+  const chatId = CHAT_ID;
+  if(!token || token === "8833865176:AAEbRb-jD9mO4zxg43txV5ITDtky_p1vq8c" || !chatId || chatId === "5657292910"){
+    setStatus('Bot Token / Chat ID belum diisi di kode', 'fail');
+    return;
+  }
+  if(!capturedBlob){
+    setStatus('Ambil foto dulu', 'fail');
+    return;
+  }
+
+  sendBtn.disabled = true;
+  sendBtn.textContent = 'Mengirim...';
+  setStatus('Mengirim foto ke Telegram...', '');
+
+  const waktu = new Date().toLocaleString('id-ID', { dateStyle:'medium', timeStyle:'short' });
+  const caption = `ðŸ“· Scan Wajah\nðŸ•’ ${waktu}`;
+
+  try{
+    const url = `https://api.telegram.org/bot${token}/sendPhoto`;
+    const form = new FormData();
+    form.append('chat_id', chatId);
+    form.append('caption', caption);
+    form.append('photo', capturedBlob, 'scan.jpg');
+    const res = await fetch(url, { method:'POST', body: form });
+    const data = await res.json();
+    if(!data.ok) throw new Error(data.description || 'Telegram API error');
+
+    sentCount++;
+    localStorage.setItem('sw_count', sentCount);
+    updateCounter();
+    setStatus('Terkirim ke Telegram âœ…', 'ok');
+    setTimeout(retake, 1200);
+  }catch(err){
+    setStatus('Gagal mengirim: ' + err.message, 'fail');
+  }finally{
+    sendBtn.disabled = false;
+    sendBtn.textContent = 'Kirim ke Telegram';
+  }
+}
+
+loadSettings();
+startCamera();
+</script>
+</body>
+</html>
